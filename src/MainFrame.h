@@ -1,0 +1,42 @@
+#pragma once
+
+#include "GitData.h"
+
+#include <wx/frame.h>
+
+class GraphCanvas;
+class wxSplitterWindow;
+class wxStatusBar;
+class wxTextCtrl;
+class wxToolBar;
+
+class MainFrame : public wxFrame {
+public:
+    MainFrame(const wxString& title, const wxSize& size);
+
+private:
+    void OnOpenRepo(wxCommandEvent&);
+    void OnRefresh(wxCommandEvent&);
+    void OnFit(wxCommandEvent&);
+    void OnCommitSelected(wxCommandEvent&);
+    void OnQuit(wxCommandEvent&);
+
+    void OpenPath(const wxString& path);
+    void BuildGraph();
+
+    enum {
+        ID_REFRESH = wxID_HIGHEST + 1,
+        ID_FIT,
+    };
+
+    wxToolBar* m_toolbar = nullptr;
+    wxSplitterWindow* m_splitter = nullptr;
+    GraphCanvas* m_canvas = nullptr;
+    wxTextCtrl* m_details = nullptr;
+    wxStatusBar* m_status = nullptr;
+
+    wxString m_repoPath;
+    std::vector<Commit> m_commits;
+    std::vector<GitRef> m_refs;
+    std::vector<Edge> m_edges;
+};
