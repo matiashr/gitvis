@@ -17,6 +17,10 @@ public:
     static bool fileDiff(const wxString& path, const wxString& oid,
                          const std::vector<wxString>& parents, const wxString& file,
                          wxString& diff, wxString& error);
+    static bool changedFilesBetween(const wxString& path, const wxString& oidA, const wxString& oidB,
+                                    std::vector<FileChange>& files, wxString& error);
+    static bool fileDiffBetween(const wxString& path, const wxString& oidA, const wxString& oidB,
+                                const wxString& file, wxString& diff, wxString& error);
 
 private:
     static long runGit(const wxString& path, const std::vector<wxString>& args, wxString& out);

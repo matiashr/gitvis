@@ -21,10 +21,12 @@ private:
     void OnFit(wxCommandEvent&);
     void OnCommitSelected(wxCommandEvent&);
     void OnFileSelected(wxCommandEvent&);
+    void OnDiffRequested(wxCommandEvent&);
     void OnQuit(wxCommandEvent&);
 
     void OpenPath(const wxString& path);
     void BuildGraph();
+    const Commit* FindCommit(const wxString& oid) const;
 
     enum {
         ID_REFRESH = wxID_HIGHEST + 1,
@@ -48,4 +50,8 @@ private:
     wxString m_currentOid;
     std::vector<wxString> m_currentParents;
     std::vector<FileChange> m_currentFiles;
+
+    bool m_compareMode = false;
+    wxString m_compareBase;
+    wxString m_compareTarget;
 };

@@ -6,6 +6,7 @@
 #include <wx/dcmemory.h>
 #include <wx/font.h>
 #include <wx/image.h>
+#include <wx/menu.h>
 #include <wx/tooltip.h>
 
 #include <algorithm>
@@ -13,6 +14,7 @@
 #include <map>
 
 wxDEFINE_EVENT(wxEVT_COMMIT_SELECTED, wxCommandEvent);
+wxDEFINE_EVENT(wxEVT_DIFF_REQUESTED, wxCommandEvent);
 
 namespace {
 
@@ -20,10 +22,16 @@ const double LANE_SPACING = 42.0;
 const double TIME_SCALE = 0.02;
 const double RADIUS = 5.0;
 
+// Caps how much vertical space a single gap between chronologically adjacent
+// commits can consume, so a few long idle stretches don't squeeze the rest
+// of the history into an unreadable sliver at the default (fit-to-window) zoom.
+const double GAP_CAP_SECONDS = 86400.0;
+
 const wxColour BG(0x16, 0x1b, 0x22);
 const wxColour GRID(0x25, 0x2c, 0x36);
 const wxColour TXT_DIM(0x9a, 0xa3, 0xad);
 const wxColour SEL(0xf5, 0xc2, 0x11);
+const wxColour COMPARE(0xff, 0x6a, 0x00);
 
 const wxColour PALETTE[] = {
     wxColour(0x56, 0x8a, 0xf0), wxColour(0x9a, 0xed, 0x70), wxColour(0xff, 0x85, 0x7f),
@@ -64,6 +72,8 @@ GraphCanvas::GraphCanvas(wxWindow* parent, wxWindowID id)
     Bind(wxEVT_LEFT_DOWN, &GraphCanvas::OnMouseDown, this);
     Bind(wxEVT_LEFT_UP, &GraphCanvas::OnMouseUp, this);
     Bind(wxEVT_LEAVE_WINDOW, &GraphCanvas::OnMouseLeave, this);
+    Bind(wxEVT_RIGHT_DOWN, &GraphCanvas::OnMouseRightDown, this);
+    Bind(wxEVT_MENU, &GraphCanvas::OnDiffMenuClick, this, ID_DIFF_MENU);
 }
 
 void GraphCanvas::SetData(const std::vector<Commit>& commits, const std::vector<Edge>& edges,
@@ -74,12 +84,70 @@ void GraphCanvas::SetData(const std::vector<Commit>& commits, const std::vector<
     m_minTime = minTime;
     m_maxTime = maxTime;
     m_selectedOid.clear();
+    m_compareOids.clear();
     if (m_maxTime == m_minTime) {
         m_maxTime = m_minTime + 1;
     }
+    BuildTimeAxis();
     m_fitPending = false;
     FitView(GetClientSize());
     Refresh();
+}
+
+void GraphCanvas::BuildTimeAxis() {
+    std::vector<long long> times;
+    times.reserve(m_commits.size() + 2);
+    times.push_back(m_minTime);
+    times.push_back(m_maxTime);
+    for (const auto& c : m_commits) {
+        times.push_back(c.time);
+    }
+    std::sort(times.begin(), times.end(), std::greater<long long>());
+    times.erase(std::unique(times.begin(), times.end()), times.end());
+
+    m_timeAxis.clear();
+    m_timeAxis.reserve(times.size());
+    if (times.empty()) {
+        return;
+    }
+
+    double y = 0.0;
+    m_timeAxis.emplace_back(times[0], y);
+    for (size_t i = 1; i < times.size(); ++i) {
+        const double gap = (double)(times[i - 1] - times[i]);
+        y += std::min(gap, GAP_CAP_SECONDS) * TIME_SCALE;
+        m_timeAxis.emplace_back(times[i], y);
+    }
+}
+
+double GraphCanvas::TimeToY(long long t) const {
+    if (m_timeAxis.empty()) {
+        return 0.0;
+    }
+    if (t >= m_timeAxis.front().first) {
+        return m_timeAxis.front().second;
+    }
+    if (t <= m_timeAxis.back().first) {
+        return m_timeAxis.back().second;
+    }
+
+    size_t lo = 0, hi = m_timeAxis.size() - 1;
+    while (lo + 1 < hi) {
+        const size_t mid = (lo + hi) / 2;
+        if (m_timeAxis[mid].first >= t) {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+
+    const auto& a = m_timeAxis[lo];  // time >= t
+    const auto& b = m_timeAxis[hi];  // time <= t
+    if (a.first == b.first) {
+        return a.second;
+    }
+    const double frac = (double)(a.first - t) / (double)(a.first - b.first);
+    return a.second + frac * (b.second - a.second);
 }
 
 void GraphCanvas::ResetView() {
@@ -168,10 +236,47 @@ void GraphCanvas::OnMouseDown(wxMouseEvent& evt) {
     if (evt.GetButton() != wxMOUSE_BTN_LEFT) {
         return;
     }
+    if (evt.ControlDown()) {
+        const Commit* c = HitTest(evt.GetPosition());
+        if (c) {
+            ToggleCompareSelection(c->oid);
+            Refresh();
+        }
+        return;
+    }
     m_dragging = true;
     m_panned = false;
     m_lastMouse = evt.GetPosition();
     CaptureMouse();
+}
+
+void GraphCanvas::OnMouseRightDown(wxMouseEvent& evt) {
+    wxMenu menu;
+    wxMenuItem* diffItem = menu.Append(ID_DIFF_MENU, wxT("Diff Selected Commits"));
+    diffItem->Enable(m_compareOids.size() == 2);
+    PopupMenu(&menu, evt.GetPosition());
+}
+
+void GraphCanvas::OnDiffMenuClick(wxCommandEvent&) {
+    if (m_compareOids.size() != 2) {
+        return;
+    }
+    wxCommandEvent e(wxEVT_DIFF_REQUESTED, GetId());
+    e.SetString(m_compareOids[0] + wxT("|") + m_compareOids[1]);
+    e.SetEventObject(this);
+    wxPostEvent(this, e);
+}
+
+void GraphCanvas::ToggleCompareSelection(const wxString& oid) {
+    auto it = std::find(m_compareOids.begin(), m_compareOids.end(), oid);
+    if (it != m_compareOids.end()) {
+        m_compareOids.erase(it);
+        return;
+    }
+    m_compareOids.push_back(oid);
+    if (m_compareOids.size() > 2) {
+        m_compareOids.erase(m_compareOids.begin());
+    }
 }
 
 void GraphCanvas::OnMouseUp(wxMouseEvent& evt) {
@@ -217,7 +322,7 @@ void GraphCanvas::FitView(const wxSize& size) {
     double minX = 1e18, maxX = -1e18, minY = 1e18, maxY = -1e18;
     for (const Commit& c : m_commits) {
         const double x = c.lane * LANE_SPACING;
-        const double y = (double)(m_maxTime - c.time) * TIME_SCALE;
+        const double y = TimeToY(c.time);
         minX = std::min(minX, x);
         maxX = std::max(maxX, x);
         minY = std::min(minY, y);
@@ -269,7 +374,7 @@ const Commit* GraphCanvas::HitTest(const wxPoint& sp) const {
     const double r = std::max(1.5, std::min(RADIUS * m_scale, 24.0));
     double best = r + 4.0;
     for (const auto& c : m_commits) {
-        const wxPoint p = W2S(c.lane * LANE_SPACING, (double)(m_maxTime - c.time) * TIME_SCALE);
+        const wxPoint p = W2S(c.lane * LANE_SPACING, TimeToY(c.time));
         const double dx = p.x - sp.x;
         const double dy = p.y - sp.y;
         const double d = std::sqrt(dx * dx + dy * dy);
@@ -298,9 +403,9 @@ void GraphCanvas::DrawGraph(wxDC& dc, const wxSize& size) {
 
     for (const Edge& e : m_edges) {
         const double fx = e.fromLane * LANE_SPACING;
-        const double fy = (double)(m_maxTime - e.fromTime) * TIME_SCALE;
+        const double fy = TimeToY(e.fromTime);
         const double tx = e.toLane * LANE_SPACING;
-        const double ty = (double)(m_maxTime - e.toTime) * TIME_SCALE;
+        const double ty = TimeToY(e.toTime);
 
         dc.SetPen(wxPen(LaneColour(e.fromLane), 2));
         if (e.fromLane == e.toLane) {
@@ -314,7 +419,7 @@ void GraphCanvas::DrawGraph(wxDC& dc, const wxSize& size) {
 
     const double r = std::max(1.5, std::min(RADIUS * m_scale, 24.0));
     for (const Commit& c : m_commits) {
-        const wxPoint p = W2S(c.lane * LANE_SPACING, (double)(m_maxTime - c.time) * TIME_SCALE);
+        const wxPoint p = W2S(c.lane * LANE_SPACING, TimeToY(c.time));
         if (p.x < -20 || p.y < -20 || p.x > size.GetWidth() + 20 || p.y > size.GetHeight() + 20) {
             continue;
         }
@@ -325,6 +430,25 @@ void GraphCanvas::DrawGraph(wxDC& dc, const wxSize& size) {
             dc.SetBrush(*wxTRANSPARENT_BRUSH);
             dc.DrawCircle(p, r + 4);
         }
+
+        const auto cmpIt = std::find(m_compareOids.begin(), m_compareOids.end(), c.oid);
+        if (cmpIt != m_compareOids.end()) {
+            dc.SetPen(wxPen(COMPARE, 2, wxPENSTYLE_SHORT_DASH));
+            dc.SetBrush(*wxTRANSPARENT_BRUSH);
+            dc.DrawCircle(p, r + 7);
+
+            const int order = (int)(cmpIt - m_compareOids.begin()) + 1;
+            const wxString label = wxString::Format(wxT("%d"), order);
+            dc.SetFont(wxFont(wxSize(9, 9), wxFONTFAMILY_DEFAULT, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_BOLD));
+            const wxSize ext = dc.GetTextExtent(label);
+            const wxPoint badge(p.x + (int)(r + 7), p.y - (int)(r + 7));
+            dc.SetPen(wxPen(COMPARE));
+            dc.SetBrush(wxBrush(COMPARE));
+            dc.DrawCircle(badge, ext.GetHeight() / 2 + 2);
+            dc.SetTextForeground(*wxBLACK);
+            dc.DrawText(label, badge.x - ext.GetWidth() / 2, badge.y - ext.GetHeight() / 2);
+        }
+
         dc.SetPen(wxPen(col, 2));
         dc.SetBrush(wxBrush(col));
         dc.DrawCircle(p, c.isMerge() ? r + 2 : r);
@@ -337,7 +461,7 @@ void GraphCanvas::DrawGraph(wxDC& dc, const wxSize& size) {
         if (!c) {
             continue;
         }
-        const wxPoint p = W2S(c->lane * LANE_SPACING, (double)(m_maxTime - c->time) * TIME_SCALE);
+        const wxPoint p = W2S(c->lane * LANE_SPACING, TimeToY(c->time));
         if (p.x < -80 || p.x > size.GetWidth() + 80 || p.y < -80 || p.y > size.GetHeight() + 80) {
             continue;
         }
@@ -367,10 +491,10 @@ void GraphCanvas::DrawGraph(wxDC& dc, const wxSize& size) {
 
 void GraphCanvas::DrawTimeGrid(wxDC& dc, const wxSize& size) {
     const long long range = m_maxTime - m_minTime;
-    if (range <= 0) {
+    if (range <= 0 || m_timeAxis.empty()) {
         return;
     }
-    const double rangePx = (double)range * TIME_SCALE * m_scale;
+    const double rangePx = m_timeAxis.back().second * m_scale;
     if (rangePx <= 0) {
         return;
     }
@@ -398,7 +522,7 @@ void GraphCanvas::DrawTimeGrid(wxDC& dc, const wxSize& size) {
     dc.SetPen(wxPen(GRID, 1));
     dc.SetFont(wxFont(wxSize(10, 10), wxFONTFAMILY_DEFAULT, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_NORMAL));
     for (; t <= m_maxTime; t += step) {
-        const wxPoint p = W2S(0, (double)(m_maxTime - t) * TIME_SCALE);
+        const wxPoint p = W2S(0, TimeToY(t));
         if (p.y < 0 || p.y > size.GetHeight()) {
             continue;
         }

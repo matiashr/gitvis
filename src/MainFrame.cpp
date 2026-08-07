@@ -77,6 +77,7 @@ MainFrame::MainFrame(const wxString& title, const wxSize& size)
     m_status->SetStatusText(wxT("Ready"));
 
     m_canvas->Bind(wxEVT_COMMIT_SELECTED, &MainFrame::OnCommitSelected, this);
+    m_canvas->Bind(wxEVT_DIFF_REQUESTED, &MainFrame::OnDiffRequested, this);
     m_fileList->Bind(wxEVT_LISTBOX, &MainFrame::OnFileSelected, this);
     Bind(wxEVT_MENU, &MainFrame::OnOpenRepo, this, wxID_OPEN);
     Bind(wxEVT_MENU, &MainFrame::OnRefresh, this, ID_REFRESH);
@@ -130,6 +131,9 @@ void MainFrame::OpenPath(const wxString& path) {
     m_currentOid.clear();
     m_currentParents.clear();
     m_currentFiles.clear();
+    m_compareMode = false;
+    m_compareBase.clear();
+    m_compareTarget.clear();
     m_fileList->Clear();
     m_diffView->Clear();
     m_details->SetValue(wxT("No commit selected.\n\nClick a node to inspect it."));
@@ -164,11 +168,21 @@ void MainFrame::BuildGraph() {
     m_canvas->SetData(m_commits, m_edges, m_refs, minT, maxT);
 }
 
+const Commit* MainFrame::FindCommit(const wxString& oid) const {
+    for (const auto& cm : m_commits) {
+        if (cm.oid == oid) {
+            return &cm;
+        }
+    }
+    return nullptr;
+}
+
 void MainFrame::OnCommitSelected(wxCommandEvent& evt) {
     const wxString oid = evt.GetString();
     m_currentOid.clear();
     m_currentParents.clear();
     m_currentFiles.clear();
+    m_compareMode = false;
     m_fileList->Clear();
     m_diffView->Clear();
 
@@ -177,13 +191,7 @@ void MainFrame::OnCommitSelected(wxCommandEvent& evt) {
         return;
     }
 
-    const Commit* c = nullptr;
-    for (const auto& cm : m_commits) {
-        if (cm.oid == oid) {
-            c = &cm;
-            break;
-        }
-    }
+    const Commit* c = FindCommit(oid);
     if (!c) {
         return;
     }
@@ -241,15 +249,76 @@ void MainFrame::OnCommitSelected(wxCommandEvent& evt) {
 
 void MainFrame::OnFileSelected(wxCommandEvent& evt) {
     const int sel = evt.GetSelection();
-    if (sel < 0 || (size_t)sel >= m_currentFiles.size() || m_currentOid.IsEmpty()) {
+    if (sel < 0 || (size_t)sel >= m_currentFiles.size()) {
+        return;
+    }
+    if (!m_compareMode && m_currentOid.IsEmpty()) {
         return;
     }
 
     const FileChange& fc = m_currentFiles[sel];
     wxString diff, err;
-    if (!GitRepository::fileDiff(m_repoPath, m_currentOid, m_currentParents, fc.path, diff, err)) {
+    bool ok;
+    if (m_compareMode) {
+        ok = GitRepository::fileDiffBetween(m_repoPath, m_compareBase, m_compareTarget, fc.path, diff, err);
+    } else {
+        ok = GitRepository::fileDiff(m_repoPath, m_currentOid, m_currentParents, fc.path, diff, err);
+    }
+    if (!ok) {
         m_diffView->SetValue(wxT("Failed to load diff:\n") + err);
         return;
     }
     m_diffView->SetValue(diff);
+}
+
+void MainFrame::OnDiffRequested(wxCommandEvent& evt) {
+    const wxString s = evt.GetString();
+    const int sep = s.Find(wxT('|'));
+    if (sep == wxNOT_FOUND) {
+        return;
+    }
+    const wxString oidA = s.Left(sep);
+    const wxString oidB = s.Mid(sep + 1);
+
+    m_currentOid.clear();
+    m_currentParents.clear();
+    m_currentFiles.clear();
+    m_fileList->Clear();
+    m_diffView->Clear();
+    m_compareMode = true;
+    m_compareBase = oidA;
+    m_compareTarget = oidB;
+
+    const Commit* a = FindCommit(oidA);
+    const Commit* b = FindCommit(oidB);
+
+    wxString txt;
+    txt << wxT("Diff\n");
+    txt << wxT("A  ") << oidA.Left(10);
+    if (a) {
+        txt << wxT("  ") << a->subject;
+    }
+    txt << wxT("\n");
+    txt << wxT("B  ") << oidB.Left(10);
+    if (b) {
+        txt << wxT("  ") << b->subject;
+    }
+    txt << wxT("\n");
+    m_details->SetValue(txt);
+
+    wxString err;
+    if (!GitRepository::changedFilesBetween(m_repoPath, oidA, oidB, m_currentFiles, err)) {
+        m_diffView->SetValue(wxT("Failed to list changed files:\n") + err);
+        return;
+    }
+
+    for (const auto& fc : m_currentFiles) {
+        wxString label = fc.status.Left(1) + wxT("  ");
+        if (!fc.oldPath.IsEmpty()) {
+            label << fc.oldPath << wxT(" -> ") << fc.path;
+        } else {
+            label << fc.path;
+        }
+        m_fileList->Append(label);
+    }
 }

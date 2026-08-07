@@ -4,7 +4,10 @@
 
 #include <wx/panel.h>
 
+#include <utility>
+
 wxDECLARE_EVENT(wxEVT_COMMIT_SELECTED, wxCommandEvent);
+wxDECLARE_EVENT(wxEVT_DIFF_REQUESTED, wxCommandEvent);
 
 class GraphCanvas : public wxPanel {
 public:
@@ -24,13 +27,23 @@ private:
     void OnMouseDown(wxMouseEvent&);
     void OnMouseUp(wxMouseEvent&);
     void OnMouseLeave(wxMouseEvent&);
+    void OnMouseRightDown(wxMouseEvent&);
+    void OnDiffMenuClick(wxCommandEvent&);
 
+    void ToggleCompareSelection(const wxString& oid);
     void DrawGraph(wxDC& dc, const wxSize& size);
     void DrawTimeGrid(wxDC& dc, const wxSize& size);
     void FitView(const wxSize& size);
     wxPoint W2S(double x, double y) const;
     const Commit* HitTest(const wxPoint& sp) const;
     const Commit* FindCommit(const wxString& oid) const;
+
+    void BuildTimeAxis();
+    double TimeToY(long long t) const;
+
+    enum {
+        ID_DIFF_MENU = wxID_HIGHEST + 900,
+    };
 
     std::vector<Commit> m_commits;
     std::vector<Edge> m_edges;
@@ -46,4 +59,10 @@ private:
     bool m_panned = false;
     wxPoint m_lastMouse;
     wxString m_selectedOid;
+    std::vector<wxString> m_compareOids;
+
+    // Descending by time; y=0 at m_maxTime, increasing towards older commits.
+    // Gaps between chronologically adjacent commits are capped so that long
+    // idle stretches don't dominate the default (fit-to-window) view.
+    std::vector<std::pair<long long, double>> m_timeAxis;
 };

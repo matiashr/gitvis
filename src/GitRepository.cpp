@@ -233,6 +233,34 @@ bool GitRepository::fileDiff(const wxString& path, const wxString& oid,
     return true;
 }
 
+bool GitRepository::changedFilesBetween(const wxString& path, const wxString& oidA, const wxString& oidB,
+                                        std::vector<FileChange>& files, wxString& error) {
+    files.clear();
+
+    wxString out;
+    long rc = runGit(path, { wxT("diff"), wxT("--name-status"), wxT("-M"), oidA, oidB }, out);
+    if (rc != 0) {
+        error = wxT("git diff failed (exit code ");
+        error << rc << wxT(")");
+        return false;
+    }
+    parseNameStatus(out, files);
+    return true;
+}
+
+bool GitRepository::fileDiffBetween(const wxString& path, const wxString& oidA, const wxString& oidB,
+                                    const wxString& file, wxString& diff, wxString& error) {
+    wxString out;
+    long rc = runGit(path, { wxT("diff"), oidA, oidB, wxT("--"), file }, out);
+    if (rc != 0) {
+        error = wxT("git diff failed (exit code ");
+        error << rc << wxT(")");
+        return false;
+    }
+    diff = out;
+    return true;
+}
+
 bool GitRepository::load(const wxString& path, std::vector<Commit>& commits,
                          std::vector<GitRef>& refs, wxString& error) {
     commits.clear();
