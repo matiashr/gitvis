@@ -13,6 +13,7 @@
 #include <wx/sizer.h>
 #include <wx/splitter.h>
 #include <wx/statusbr.h>
+#include <wx/stc/stc.h>
 #include <wx/textctrl.h>
 #include <wx/toolbar.h>
 #include <wx/utils.h>
@@ -56,10 +57,37 @@ MainFrame::MainFrame(const wxString& title, const wxSize& size)
 
     m_rightSplitter = new wxSplitterWindow(rightPanel, wxID_ANY);
     m_fileList = new wxListBox(m_rightSplitter, wxID_ANY);
-    m_diffView = new wxTextCtrl(m_rightSplitter, wxID_ANY, wxEmptyString,
-                                wxDefaultPosition, wxDefaultSize,
-                                wxTE_MULTILINE | wxTE_READONLY | wxTE_DONTWRAP);
-    m_diffView->SetFont(monoFont);
+
+    m_diffView = new wxStyledTextCtrl(m_rightSplitter, wxID_ANY);
+    m_diffView->SetLexer(wxSTC_LEX_DIFF);
+    m_diffView->SetReadOnly(true);
+    m_diffView->SetWrapMode(wxSTC_WRAP_NONE);
+    m_diffView->SetMarginWidth(1, 0);  // no folding margin
+    m_diffView->SetMarginWidth(0, 45);  // line numbers
+    m_diffView->SetMarginType(0, wxSTC_MARGIN_NUMBER);
+
+    const wxColour diffBg(0x16, 0x1b, 0x22);
+    const wxColour diffFg(0xd7, 0xdc, 0xe3);
+    m_diffView->StyleSetBackground(wxSTC_STYLE_DEFAULT, diffBg);
+    m_diffView->StyleSetForeground(wxSTC_STYLE_DEFAULT, diffFg);
+    m_diffView->StyleSetFont(wxSTC_STYLE_DEFAULT, monoFont);
+    m_diffView->StyleClearAll();
+    m_diffView->SetMarginBackground(0, diffBg);
+    m_diffView->StyleSetForeground(wxSTC_STYLE_LINENUMBER, wxColour(0x5a, 0x63, 0x6d));
+    m_diffView->StyleSetBackground(wxSTC_STYLE_LINENUMBER, diffBg);
+    m_diffView->SetCaretForeground(diffFg);
+    m_diffView->SetSelBackground(true, wxColour(0x2d, 0x3a, 0x4a));
+
+    m_diffView->StyleSetForeground(wxSTC_DIFF_ADDED, wxColour(0x7d, 0xd9, 0x5f));
+    m_diffView->StyleSetForeground(wxSTC_DIFF_DELETED, wxColour(0xff, 0x85, 0x7f));
+    m_diffView->StyleSetForeground(wxSTC_DIFF_CHANGED, wxColour(0xf5, 0xa6, 0x23));
+    m_diffView->StyleSetForeground(wxSTC_DIFF_POSITION, wxColour(0x69, 0xc8, 0xe6));
+    m_diffView->StyleSetForeground(wxSTC_DIFF_HEADER, wxColour(0x9a, 0xa3, 0xad));
+    m_diffView->StyleSetForeground(wxSTC_DIFF_COMMAND, wxColour(0x9a, 0xa3, 0xad));
+    m_diffView->StyleSetForeground(wxSTC_DIFF_COMMENT, wxColour(0x9a, 0xa3, 0xad));
+    m_diffView->StyleSetBold(wxSTC_DIFF_POSITION, true);
+    m_diffView->StyleSetBold(wxSTC_DIFF_HEADER, true);
+
     m_rightSplitter->SplitVertically(m_fileList, m_diffView, 220);
     m_rightSplitter->SetSashGravity(0.3);
     m_rightSplitter->SetMinimumPaneSize(100);
@@ -135,7 +163,7 @@ void MainFrame::OpenPath(const wxString& path) {
     m_compareBase.clear();
     m_compareTarget.clear();
     m_fileList->Clear();
-    m_diffView->Clear();
+    SetDiffText(wxEmptyString);
     m_details->SetValue(wxT("No commit selected.\n\nClick a node to inspect it."));
 
     m_status->SetStatusText(wxT("Repository: ") + path);
@@ -177,6 +205,13 @@ const Commit* MainFrame::FindCommit(const wxString& oid) const {
     return nullptr;
 }
 
+void MainFrame::SetDiffText(const wxString& diff) {
+    m_diffView->SetReadOnly(false);
+    m_diffView->ClearAll();
+    m_diffView->SetText(diff);
+    m_diffView->SetReadOnly(true);
+}
+
 void MainFrame::OnCommitSelected(wxCommandEvent& evt) {
     const wxString oid = evt.GetString();
     m_currentOid.clear();
@@ -184,7 +219,7 @@ void MainFrame::OnCommitSelected(wxCommandEvent& evt) {
     m_currentFiles.clear();
     m_compareMode = false;
     m_fileList->Clear();
-    m_diffView->Clear();
+    SetDiffText(wxEmptyString);
 
     if (oid.IsEmpty()) {
         m_details->SetValue(wxT("No commit selected.\n\nClick a node to inspect it."));
@@ -232,7 +267,7 @@ void MainFrame::OnCommitSelected(wxCommandEvent& evt) {
 
     wxString err;
     if (!GitRepository::changedFiles(m_repoPath, oid, c->parents, m_currentFiles, err)) {
-        m_diffView->SetValue(wxT("Failed to list changed files:\n") + err);
+        SetDiffText(wxT("Failed to list changed files:\n") + err);
         return;
     }
 
@@ -265,10 +300,10 @@ void MainFrame::OnFileSelected(wxCommandEvent& evt) {
         ok = GitRepository::fileDiff(m_repoPath, m_currentOid, m_currentParents, fc.path, diff, err);
     }
     if (!ok) {
-        m_diffView->SetValue(wxT("Failed to load diff:\n") + err);
+        SetDiffText(wxT("Failed to load diff:\n") + err);
         return;
     }
-    m_diffView->SetValue(diff);
+    SetDiffText(diff);
 }
 
 void MainFrame::OnDiffRequested(wxCommandEvent& evt) {
@@ -284,7 +319,7 @@ void MainFrame::OnDiffRequested(wxCommandEvent& evt) {
     m_currentParents.clear();
     m_currentFiles.clear();
     m_fileList->Clear();
-    m_diffView->Clear();
+    SetDiffText(wxEmptyString);
     m_compareMode = true;
     m_compareBase = oidA;
     m_compareTarget = oidB;
@@ -308,7 +343,7 @@ void MainFrame::OnDiffRequested(wxCommandEvent& evt) {
 
     wxString err;
     if (!GitRepository::changedFilesBetween(m_repoPath, oidA, oidB, m_currentFiles, err)) {
-        m_diffView->SetValue(wxT("Failed to list changed files:\n") + err);
+        SetDiffText(wxT("Failed to list changed files:\n") + err);
         return;
     }
 

@@ -8,6 +8,7 @@ class GraphCanvas;
 class wxListBox;
 class wxSplitterWindow;
 class wxStatusBar;
+class wxStyledTextCtrl;
 class wxTextCtrl;
 class wxToolBar;
 
@@ -26,6 +27,7 @@ private:
 
     void OpenPath(const wxString& path);
     void BuildGraph();
+    void SetDiffText(const wxString& diff);
     const Commit* FindCommit(const wxString& oid) const;
 
     enum {
@@ -39,7 +41,7 @@ private:
     GraphCanvas* m_canvas = nullptr;
     wxTextCtrl* m_details = nullptr;
     wxListBox* m_fileList = nullptr;
-    wxTextCtrl* m_diffView = nullptr;
+    wxStyledTextCtrl* m_diffView = nullptr;
     wxStatusBar* m_status = nullptr;
 
     wxString m_repoPath;
