@@ -5,6 +5,7 @@
 #include <wx/frame.h>
 
 class GraphCanvas;
+class wxListBox;
 class wxSplitterWindow;
 class wxStatusBar;
 class wxTextCtrl;
@@ -19,6 +20,7 @@ private:
     void OnRefresh(wxCommandEvent&);
     void OnFit(wxCommandEvent&);
     void OnCommitSelected(wxCommandEvent&);
+    void OnFileSelected(wxCommandEvent&);
     void OnQuit(wxCommandEvent&);
 
     void OpenPath(const wxString& path);
@@ -31,12 +33,19 @@ private:
 
     wxToolBar* m_toolbar = nullptr;
     wxSplitterWindow* m_splitter = nullptr;
+    wxSplitterWindow* m_rightSplitter = nullptr;
     GraphCanvas* m_canvas = nullptr;
     wxTextCtrl* m_details = nullptr;
+    wxListBox* m_fileList = nullptr;
+    wxTextCtrl* m_diffView = nullptr;
     wxStatusBar* m_status = nullptr;
 
     wxString m_repoPath;
     std::vector<Commit> m_commits;
     std::vector<GitRef> m_refs;
     std::vector<Edge> m_edges;
+
+    wxString m_currentOid;
+    std::vector<wxString> m_currentParents;
+    std::vector<FileChange> m_currentFiles;
 };

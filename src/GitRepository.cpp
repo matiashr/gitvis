@@ -27,6 +27,48 @@ wxString fromUtf8(const std::string& s) {
     return wxString::FromUTF8(s.c_str());
 }
 
+const wxString EMPTY_TREE = wxT("4b825dc642cb6eb9a060e54bf8d69288fbee4904");
+
+void parseNameStatus(const wxString& raw, std::vector<FileChange>& files) {
+    const std::string s = raw.utf8_string();
+    size_t start = 0;
+    while (start < s.size()) {
+        size_t nl = s.find('\n', start);
+        if (nl == std::string::npos) {
+            nl = s.size();
+        }
+        std::string line = s.substr(start, nl - start);
+        start = nl + 1;
+        if (line.empty()) {
+            continue;
+        }
+
+        std::vector<std::string> f;
+        size_t b = 0;
+        while (b < line.size()) {
+            size_t e = line.find('\t', b);
+            if (e == std::string::npos) {
+                e = line.size();
+            }
+            f.push_back(line.substr(b, e - b));
+            b = e + 1;
+        }
+        if (f.size() < 2) {
+            continue;
+        }
+
+        FileChange fc;
+        fc.status = fromUtf8(f[0]);
+        if (f.size() >= 3) {
+            fc.oldPath = fromUtf8(f[1]);
+            fc.path = fromUtf8(f[2]);
+        } else {
+            fc.path = fromUtf8(f[1]);
+        }
+        files.push_back(fc);
+    }
+}
+
 bool parseLog(const wxString& raw, std::vector<Commit>& commits) {
     const std::string s = raw.utf8_string();
     size_t start = 0;
@@ -156,6 +198,39 @@ bool GitRepository::inWorkTree(const wxString& path) {
         return false;
     }
     return out.Upper().Trim().Trim(false) == wxT("TRUE");
+}
+
+bool GitRepository::changedFiles(const wxString& path, const wxString& oid,
+                                 const std::vector<wxString>& parents,
+                                 std::vector<FileChange>& files, wxString& error) {
+    files.clear();
+    const wxString base = parents.empty() ? EMPTY_TREE : parents[0];
+
+    wxString out;
+    long rc = runGit(path, { wxT("diff"), wxT("--name-status"), wxT("-M"), base, oid }, out);
+    if (rc != 0) {
+        error = wxT("git diff failed (exit code ");
+        error << rc << wxT(")");
+        return false;
+    }
+    parseNameStatus(out, files);
+    return true;
+}
+
+bool GitRepository::fileDiff(const wxString& path, const wxString& oid,
+                             const std::vector<wxString>& parents, const wxString& file,
+                             wxString& diff, wxString& error) {
+    const wxString base = parents.empty() ? EMPTY_TREE : parents[0];
+
+    wxString out;
+    long rc = runGit(path, { wxT("diff"), base, oid, wxT("--"), file }, out);
+    if (rc != 0) {
+        error = wxT("git diff failed (exit code ");
+        error << rc << wxT(")");
+        return false;
+    }
+    diff = out;
+    return true;
 }
 
 bool GitRepository::load(const wxString& path, std::vector<Commit>& commits,

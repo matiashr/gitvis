@@ -6,8 +6,11 @@
 
 #include <wx/artprov.h>
 #include <wx/dirdlg.h>
+#include <wx/listbox.h>
 #include <wx/menu.h>
 #include <wx/msgdlg.h>
+#include <wx/panel.h>
+#include <wx/sizer.h>
 #include <wx/splitter.h>
 #include <wx/statusbr.h>
 #include <wx/textctrl.h>
@@ -41,11 +44,32 @@ MainFrame::MainFrame(const wxString& title, const wxSize& size)
 
     m_splitter = new wxSplitterWindow(this, wxID_ANY);
     m_canvas = new GraphCanvas(m_splitter, wxID_ANY);
-    m_details = new wxTextCtrl(m_splitter, wxID_ANY, wxEmptyString,
+
+    wxPanel* rightPanel = new wxPanel(m_splitter, wxID_ANY);
+    const wxFont monoFont(wxSize(10, 10), wxFONTFAMILY_TELETYPE, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_NORMAL);
+
+    m_details = new wxTextCtrl(rightPanel, wxID_ANY, wxEmptyString,
                                wxDefaultPosition, wxDefaultSize,
                                wxTE_MULTILINE | wxTE_READONLY);
-    m_details->SetFont(wxFont(wxSize(10, 10), wxFONTFAMILY_TELETYPE, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_NORMAL));
-    m_splitter->SplitVertically(m_canvas, m_details, 820);
+    m_details->SetFont(monoFont);
+    m_details->SetMinSize(wxSize(-1, 140));
+
+    m_rightSplitter = new wxSplitterWindow(rightPanel, wxID_ANY);
+    m_fileList = new wxListBox(m_rightSplitter, wxID_ANY);
+    m_diffView = new wxTextCtrl(m_rightSplitter, wxID_ANY, wxEmptyString,
+                                wxDefaultPosition, wxDefaultSize,
+                                wxTE_MULTILINE | wxTE_READONLY | wxTE_DONTWRAP);
+    m_diffView->SetFont(monoFont);
+    m_rightSplitter->SplitVertically(m_fileList, m_diffView, 220);
+    m_rightSplitter->SetSashGravity(0.3);
+    m_rightSplitter->SetMinimumPaneSize(100);
+
+    wxBoxSizer* rightSizer = new wxBoxSizer(wxVERTICAL);
+    rightSizer->Add(m_details, 0, wxEXPAND);
+    rightSizer->Add(m_rightSplitter, 1, wxEXPAND);
+    rightPanel->SetSizer(rightSizer);
+
+    m_splitter->SplitVertically(m_canvas, rightPanel, 820);
     m_splitter->SetSashGravity(0.75);
     m_splitter->SetMinimumPaneSize(150);
 
@@ -53,6 +77,7 @@ MainFrame::MainFrame(const wxString& title, const wxSize& size)
     m_status->SetStatusText(wxT("Ready"));
 
     m_canvas->Bind(wxEVT_COMMIT_SELECTED, &MainFrame::OnCommitSelected, this);
+    m_fileList->Bind(wxEVT_LISTBOX, &MainFrame::OnFileSelected, this);
     Bind(wxEVT_MENU, &MainFrame::OnOpenRepo, this, wxID_OPEN);
     Bind(wxEVT_MENU, &MainFrame::OnRefresh, this, ID_REFRESH);
     Bind(wxEVT_MENU, &MainFrame::OnFit, this, ID_FIT);
@@ -101,6 +126,14 @@ void MainFrame::OpenPath(const wxString& path) {
     }
     m_repoPath = path;
     BuildGraph();
+
+    m_currentOid.clear();
+    m_currentParents.clear();
+    m_currentFiles.clear();
+    m_fileList->Clear();
+    m_diffView->Clear();
+    m_details->SetValue(wxT("No commit selected.\n\nClick a node to inspect it."));
+
     m_status->SetStatusText(wxT("Repository: ") + path);
     m_status->SetStatusText(wxString::Format(wxT("%ld commits, %ld refs"),
                                              (long)m_commits.size(), (long)m_refs.size()),
@@ -133,6 +166,12 @@ void MainFrame::BuildGraph() {
 
 void MainFrame::OnCommitSelected(wxCommandEvent& evt) {
     const wxString oid = evt.GetString();
+    m_currentOid.clear();
+    m_currentParents.clear();
+    m_currentFiles.clear();
+    m_fileList->Clear();
+    m_diffView->Clear();
+
     if (oid.IsEmpty()) {
         m_details->SetValue(wxT("No commit selected.\n\nClick a node to inspect it."));
         return;
@@ -179,4 +218,38 @@ void MainFrame::OnCommitSelected(wxCommandEvent& evt) {
     txt << wxT("\n");
 
     m_details->SetValue(txt);
+
+    m_currentOid = oid;
+    m_currentParents = c->parents;
+
+    wxString err;
+    if (!GitRepository::changedFiles(m_repoPath, oid, c->parents, m_currentFiles, err)) {
+        m_diffView->SetValue(wxT("Failed to list changed files:\n") + err);
+        return;
+    }
+
+    for (const auto& fc : m_currentFiles) {
+        wxString label = fc.status.Left(1) + wxT("  ");
+        if (!fc.oldPath.IsEmpty()) {
+            label << fc.oldPath << wxT(" -> ") << fc.path;
+        } else {
+            label << fc.path;
+        }
+        m_fileList->Append(label);
+    }
+}
+
+void MainFrame::OnFileSelected(wxCommandEvent& evt) {
+    const int sel = evt.GetSelection();
+    if (sel < 0 || (size_t)sel >= m_currentFiles.size() || m_currentOid.IsEmpty()) {
+        return;
+    }
+
+    const FileChange& fc = m_currentFiles[sel];
+    wxString diff, err;
+    if (!GitRepository::fileDiff(m_repoPath, m_currentOid, m_currentParents, fc.path, diff, err)) {
+        m_diffView->SetValue(wxT("Failed to load diff:\n") + err);
+        return;
+    }
+    m_diffView->SetValue(diff);
 }

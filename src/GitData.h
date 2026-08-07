@@ -29,4 +29,10 @@ struct Edge {
     long long toTime = 0;
 };
 
+struct FileChange {
+    wxString status;
+    wxString path;
+    wxString oldPath;
+};
+
 wxString formatTime(long long t);

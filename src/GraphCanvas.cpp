@@ -266,7 +266,8 @@ const Commit* GraphCanvas::FindCommit(const wxString& oid) const {
 
 const Commit* GraphCanvas::HitTest(const wxPoint& sp) const {
     const Commit* hit = nullptr;
-    double best = RADIUS + 4.0;
+    const double r = std::max(1.5, std::min(RADIUS * m_scale, 24.0));
+    double best = r + 4.0;
     for (const auto& c : m_commits) {
         const wxPoint p = W2S(c.lane * LANE_SPACING, (double)(m_maxTime - c.time) * TIME_SCALE);
         const double dx = p.x - sp.x;
@@ -311,6 +312,7 @@ void GraphCanvas::DrawGraph(wxDC& dc, const wxSize& size) {
         }
     }
 
+    const double r = std::max(1.5, std::min(RADIUS * m_scale, 24.0));
     for (const Commit& c : m_commits) {
         const wxPoint p = W2S(c.lane * LANE_SPACING, (double)(m_maxTime - c.time) * TIME_SCALE);
         if (p.x < -20 || p.y < -20 || p.x > size.GetWidth() + 20 || p.y > size.GetHeight() + 20) {
@@ -321,11 +323,11 @@ void GraphCanvas::DrawGraph(wxDC& dc, const wxSize& size) {
         if (c.oid == m_selectedOid) {
             dc.SetPen(wxPen(SEL, 2));
             dc.SetBrush(*wxTRANSPARENT_BRUSH);
-            dc.DrawCircle(p, RADIUS + 4);
+            dc.DrawCircle(p, r + 4);
         }
         dc.SetPen(wxPen(col, 2));
         dc.SetBrush(wxBrush(col));
-        dc.DrawCircle(p, c.isMerge() ? RADIUS + 2 : RADIUS);
+        dc.DrawCircle(p, c.isMerge() ? r + 2 : r);
     }
 
     dc.SetFont(wxFont(wxSize(10, 10), wxFONTFAMILY_DEFAULT, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_NORMAL));
