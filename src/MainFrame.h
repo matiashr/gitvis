@@ -6,6 +6,7 @@
 
 class GraphCanvas;
 class wxListBox;
+class wxNotebook;
 class wxSplitterWindow;
 class wxStatusBar;
 class wxStyledTextCtrl;
@@ -23,6 +24,8 @@ private:
     void OnCommitSelected(wxCommandEvent&);
     void OnFileSelected(wxCommandEvent&);
     void OnDiffRequested(wxCommandEvent&);
+    void OnTreeFileRightClick(wxMouseEvent&);
+    void OnExportFile(wxCommandEvent&);
     void OnQuit(wxCommandEvent&);
 
     void OpenPath(const wxString& path);
@@ -33,6 +36,7 @@ private:
     enum {
         ID_REFRESH = wxID_HIGHEST + 1,
         ID_FIT,
+        ID_EXPORT_FILE,
     };
 
     wxToolBar* m_toolbar = nullptr;
@@ -40,7 +44,9 @@ private:
     wxSplitterWindow* m_rightSplitter = nullptr;
     GraphCanvas* m_canvas = nullptr;
     wxTextCtrl* m_details = nullptr;
+    wxNotebook* m_fileNotebook = nullptr;
     wxListBox* m_fileList = nullptr;
+    wxListBox* m_treeFileList = nullptr;
     wxStyledTextCtrl* m_diffView = nullptr;
     wxStatusBar* m_status = nullptr;
 
@@ -52,6 +58,7 @@ private:
     wxString m_currentOid;
     std::vector<wxString> m_currentParents;
     std::vector<FileChange> m_currentFiles;
+    std::vector<wxString> m_currentTreeFiles;
 
     bool m_compareMode = false;
     wxString m_compareBase;

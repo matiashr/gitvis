@@ -1,7 +1,10 @@
 #include "GitRepository.h"
 
 #include <wx/arrstr.h>
+#include <wx/process.h>
+#include <wx/stream.h>
 #include <wx/utils.h>
+#include <wx/wfstream.h>
 
 #include <string>
 #include <vector>
@@ -66,6 +69,23 @@ void parseNameStatus(const wxString& raw, std::vector<FileChange>& files) {
             fc.path = fromUtf8(f[1]);
         }
         files.push_back(fc);
+    }
+}
+
+void parseFileList(const wxString& raw, std::vector<wxString>& files) {
+    const std::string s = raw.utf8_string();
+    size_t start = 0;
+    while (start < s.size()) {
+        size_t nl = s.find('\n', start);
+        if (nl == std::string::npos) {
+            nl = s.size();
+        }
+        std::string line = s.substr(start, nl - start);
+        start = nl + 1;
+        if (line.empty()) {
+            continue;
+        }
+        files.push_back(fromUtf8(line));
     }
 }
 
@@ -258,6 +278,54 @@ bool GitRepository::fileDiffBetween(const wxString& path, const wxString& oidA, 
         return false;
     }
     diff = out;
+    return true;
+}
+
+bool GitRepository::listTree(const wxString& path, const wxString& oid,
+                             std::vector<wxString>& files, wxString& error) {
+    files.clear();
+
+    wxString out;
+    long rc = runGit(path, { wxT("ls-tree"), wxT("-r"), wxT("--name-only"), oid }, out);
+    if (rc != 0) {
+        error = wxT("git ls-tree failed (exit code ");
+        error << rc << wxT(")");
+        return false;
+    }
+    parseFileList(out, files);
+    return true;
+}
+
+bool GitRepository::exportFile(const wxString& path, const wxString& oid, const wxString& file,
+                               const wxString& outputPath, wxString& error) {
+    const wxString cmd = wxT("git -C ") + quoteArg(path) + wxT(" show ") +
+                         quoteArg(oid + wxT(":") + file);
+
+    wxProcess process;
+    process.Redirect();
+    const long rc = wxExecute(cmd, wxEXEC_SYNC, &process);
+    if (rc != 0) {
+        error = wxT("git show failed (exit code ");
+        error << rc << wxT(")");
+        return false;
+    }
+
+    wxInputStream* in = process.GetInputStream();
+    if (!in) {
+        error = wxT("Failed to read git output");
+        return false;
+    }
+
+    wxFileOutputStream out(outputPath);
+    if (!out.IsOk()) {
+        error = wxT("Failed to open destination file");
+        return false;
+    }
+    out.Write(*in);
+    if (out.GetLastError() != wxSTREAM_NO_ERROR) {
+        error = wxT("Failed to write destination file");
+        return false;
+    }
     return true;
 }
 

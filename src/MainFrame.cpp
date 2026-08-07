@@ -6,9 +6,11 @@
 
 #include <wx/artprov.h>
 #include <wx/dirdlg.h>
+#include <wx/filedlg.h>
 #include <wx/listbox.h>
 #include <wx/menu.h>
 #include <wx/msgdlg.h>
+#include <wx/notebook.h>
 #include <wx/panel.h>
 #include <wx/sizer.h>
 #include <wx/splitter.h>
@@ -56,7 +58,12 @@ MainFrame::MainFrame(const wxString& title, const wxSize& size)
     m_details->SetMinSize(wxSize(-1, 140));
 
     m_rightSplitter = new wxSplitterWindow(rightPanel, wxID_ANY);
-    m_fileList = new wxListBox(m_rightSplitter, wxID_ANY);
+
+    m_fileNotebook = new wxNotebook(m_rightSplitter, wxID_ANY);
+    m_fileList = new wxListBox(m_fileNotebook, wxID_ANY);
+    m_fileNotebook->AddPage(m_fileList, wxT("Changed Files"));
+    m_treeFileList = new wxListBox(m_fileNotebook, wxID_ANY);
+    m_fileNotebook->AddPage(m_treeFileList, wxT("Files at Commit"));
 
     m_diffView = new wxStyledTextCtrl(m_rightSplitter, wxID_ANY);
     m_diffView->SetLexer(wxSTC_LEX_DIFF);
@@ -88,7 +95,7 @@ MainFrame::MainFrame(const wxString& title, const wxSize& size)
     m_diffView->StyleSetBold(wxSTC_DIFF_POSITION, true);
     m_diffView->StyleSetBold(wxSTC_DIFF_HEADER, true);
 
-    m_rightSplitter->SplitVertically(m_fileList, m_diffView, 220);
+    m_rightSplitter->SplitVertically(m_fileNotebook, m_diffView, 220);
     m_rightSplitter->SetSashGravity(0.3);
     m_rightSplitter->SetMinimumPaneSize(100);
 
@@ -97,8 +104,8 @@ MainFrame::MainFrame(const wxString& title, const wxSize& size)
     rightSizer->Add(m_rightSplitter, 1, wxEXPAND);
     rightPanel->SetSizer(rightSizer);
 
-    m_splitter->SplitVertically(m_canvas, rightPanel, 820);
-    m_splitter->SetSashGravity(0.75);
+    m_splitter->SplitVertically(m_canvas, rightPanel, 650);
+    m_splitter->SetSashGravity(0.5);
     m_splitter->SetMinimumPaneSize(150);
 
     m_status = CreateStatusBar(2);
@@ -107,9 +114,11 @@ MainFrame::MainFrame(const wxString& title, const wxSize& size)
     m_canvas->Bind(wxEVT_COMMIT_SELECTED, &MainFrame::OnCommitSelected, this);
     m_canvas->Bind(wxEVT_DIFF_REQUESTED, &MainFrame::OnDiffRequested, this);
     m_fileList->Bind(wxEVT_LISTBOX, &MainFrame::OnFileSelected, this);
+    m_treeFileList->Bind(wxEVT_RIGHT_DOWN, &MainFrame::OnTreeFileRightClick, this);
     Bind(wxEVT_MENU, &MainFrame::OnOpenRepo, this, wxID_OPEN);
     Bind(wxEVT_MENU, &MainFrame::OnRefresh, this, ID_REFRESH);
     Bind(wxEVT_MENU, &MainFrame::OnFit, this, ID_FIT);
+    Bind(wxEVT_MENU, &MainFrame::OnExportFile, this, ID_EXPORT_FILE);
     Bind(wxEVT_MENU, &MainFrame::OnQuit, this, wxID_EXIT);
 
     wxString cwd = wxGetCwd();
@@ -159,10 +168,12 @@ void MainFrame::OpenPath(const wxString& path) {
     m_currentOid.clear();
     m_currentParents.clear();
     m_currentFiles.clear();
+    m_currentTreeFiles.clear();
     m_compareMode = false;
     m_compareBase.clear();
     m_compareTarget.clear();
     m_fileList->Clear();
+    m_treeFileList->Clear();
     SetDiffText(wxEmptyString);
     m_details->SetValue(wxT("No commit selected.\n\nClick a node to inspect it."));
 
@@ -217,8 +228,10 @@ void MainFrame::OnCommitSelected(wxCommandEvent& evt) {
     m_currentOid.clear();
     m_currentParents.clear();
     m_currentFiles.clear();
+    m_currentTreeFiles.clear();
     m_compareMode = false;
     m_fileList->Clear();
+    m_treeFileList->Clear();
     SetDiffText(wxEmptyString);
 
     if (oid.IsEmpty()) {
@@ -280,6 +293,12 @@ void MainFrame::OnCommitSelected(wxCommandEvent& evt) {
         }
         m_fileList->Append(label);
     }
+
+    if (GitRepository::listTree(m_repoPath, oid, m_currentTreeFiles, err)) {
+        for (const auto& f : m_currentTreeFiles) {
+            m_treeFileList->Append(f);
+        }
+    }
 }
 
 void MainFrame::OnFileSelected(wxCommandEvent& evt) {
@@ -318,7 +337,9 @@ void MainFrame::OnDiffRequested(wxCommandEvent& evt) {
     m_currentOid.clear();
     m_currentParents.clear();
     m_currentFiles.clear();
+    m_currentTreeFiles.clear();
     m_fileList->Clear();
+    m_treeFileList->Clear();
     SetDiffText(wxEmptyString);
     m_compareMode = true;
     m_compareBase = oidA;
@@ -355,5 +376,38 @@ void MainFrame::OnDiffRequested(wxCommandEvent& evt) {
             label << fc.path;
         }
         m_fileList->Append(label);
+    }
+}
+
+void MainFrame::OnTreeFileRightClick(wxMouseEvent& evt) {
+    const int idx = m_treeFileList->HitTest(evt.GetPosition());
+    if (idx == wxNOT_FOUND) {
+        return;
+    }
+    m_treeFileList->SetSelection(idx);
+
+    wxMenu menu;
+    menu.Append(ID_EXPORT_FILE, wxT("Save As..."));
+    m_treeFileList->PopupMenu(&menu, evt.GetPosition());
+}
+
+void MainFrame::OnExportFile(wxCommandEvent&) {
+    const int sel = m_treeFileList->GetSelection();
+    if (sel == wxNOT_FOUND || (size_t)sel >= m_currentTreeFiles.size() || m_currentOid.IsEmpty()) {
+        return;
+    }
+
+    const wxString& relPath = m_currentTreeFiles[sel];
+    const wxString suggestedName = relPath.AfterLast(wxT('/'));
+
+    wxFileDialog dlg(this, wxT("Save File As"), wxEmptyString, suggestedName,
+                     wxT("All files (*.*)|*.*"), wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
+    if (dlg.ShowModal() != wxID_OK) {
+        return;
+    }
+
+    wxString err;
+    if (!GitRepository::exportFile(m_repoPath, m_currentOid, relPath, dlg.GetPath(), err)) {
+        wxMessageBox(wxT("Failed to export file:\n") + err, wxT("gitvis"), wxOK | wxICON_ERROR, this);
     }
 }
